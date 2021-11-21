@@ -10,12 +10,45 @@ import {
   SQLDialect,
   Token,
   TSQLGrammar,
+  BigQueryParserListener,
+  ParseTreeWalker,
+  ParseTreeListener,
 } from "antlr4ts-sql";
-import { CodeCompletionCore } from "antlr4-c3";
+import { CandidateRule, CodeCompletionCore } from "antlr4-c3";
 import { AutocompleteOption } from "./models/AutocompleteOption";
 import { AutocompleteOptionType } from "./models/AutocompleteOptionType";
 import { SimpleSQLTokenizer } from "./models/SimpleSQLTokenizer";
 import { BigQueryProjects } from "./models/Resources";
+
+function getTokenString(token: any, fullString: string, offset?: number): string {
+  if (token !== null && token.type !== Token.EOF) {
+    let stop = token.stop;
+    if (offset !== null && offset !== undefined && offset < stop) {
+      stop = offset;
+    }
+    return fullString.substring(token.start, stop + 1);
+  }
+  return "";
+}
+
+class ColumnListener implements BigQueryParserListener {
+  sql: string;
+  targetToken: any;
+
+  constructor(sql: string, targetToken: any) {
+    this.sql = sql;
+    this.targetToken = targetToken;
+  }
+  enterColumn_name(context: BigQueryGrammar.Column_nameContext) {
+    const token: any = context.start;
+    const tokenString = getTokenString(token, this.sql);
+    if (!(token.start === this.targetToken.start && token.stop === this.targetToken.stop)) {
+      return;
+    }
+    console.log("matched!", tokenString);
+    // TODO: get table from parent context
+  }
+}
 
 export class SQLAutocomplete {
   dialect: SQLDialect;
@@ -42,12 +75,12 @@ export class SQLAutocomplete {
   }
 
   autocomplete(sqlScript: string, atIndex?: number): AutocompleteOption[] {
+    const originalSqlScript = sqlScript;
     if (atIndex !== undefined && atIndex !== null) {
       // Remove everything after the index we want to get suggestions for,
       // it's not needed and keeping it in may impact which token gets selected for prediction
       sqlScript = sqlScript.substring(0, atIndex);
     }
-    const withGrave = true;
     const tokens = this._getTokens(sqlScript);
     const parser = this._getParser(tokens);
     const core = new CodeCompletionCore(parser);
@@ -134,6 +167,7 @@ export class SQLAutocomplete {
         }
         if (preferredRulesColumn.includes(rule[0])) {
           isColumnCandidatePosition = true;
+          // columnCandidateRule = rule[1];
         }
       }
     }
@@ -191,7 +225,6 @@ export class SQLAutocomplete {
             new AutocompleteOption(
               // Add "." at the end for usability.
               // Complete with project if no project set.
-              // currentProject !== null ? `${s.getName()}.` : `\`${s.getFullName()}.`,
               `\`${s.getFullName()}.`,
               AutocompleteOptionType.SCHEMA
             )
@@ -214,12 +247,21 @@ export class SQLAutocomplete {
           (t) =>
             new AutocompleteOption(
               // Complete with project and schema if no project set.
-              // currentSchema !== null ? `${t.getName()}\`` : `\`${t.getFullName()}\``,
               `\`${t.getFullName()}\``,
               AutocompleteOptionType.TABLE
             )
         );
         autocompleteOptions.unshift(...tableOptions);
+      }
+
+      // Complete column
+      if (isColumnCandidatePosition) {
+        console.log("in column candidate pos");
+        let tks = this._getTokens(originalSqlScript);
+        let ps = this._getParser(tks);
+
+        const tree = this.antlr4tssql.getParseTree(ps);
+        ParseTreeWalker.DEFAULT.walk(new ColumnListener(originalSqlScript, token) as ParseTreeListener, tree);
       }
     } else {
       if (isTableCandidatePosition) {
@@ -344,7 +386,7 @@ export class SQLAutocomplete {
         PLpgSQLGrammar.PLpgSQLParser.RULE_indirection_identifier,
       ];
     } else if (this.dialect === SQLDialect.BigQuery) {
-      return [BigQueryGrammar.BigQueryParser.RULE_column_name];
+      return [BigQueryGrammar.BigQueryParser.RULE_column_name, BigQueryGrammar.BigQueryParser.RULE_column_expr];
     }
     return [];
   }
@@ -433,14 +475,7 @@ export class SQLAutocomplete {
   }
 
   _getTokenString(token: any, fullString: string, offset: number): string {
-    if (token !== null && token.type !== Token.EOF) {
-      let stop = token.stop;
-      if (offset < stop) {
-        stop = offset;
-      }
-      return fullString.substring(token.start, stop + 1);
-    }
-    return "";
+    return getTokenString(token, fullString, offset);
   }
 
   _getTokenizeGraveNote(): boolean {

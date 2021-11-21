@@ -17,7 +17,10 @@ beforeAll(() => {
     new BigQueryProjects(
       [
         new Project("my-project", [
-          new Schema("sch1", [new Table("tbl1", [new Column("colA")]), new Table("tbl1-A", [new Column("cola")])]),
+          new Schema("sch1", [
+            new Table("tbl1", [new Column("colA"), new Column("colB")]),
+            new Table("tbl1-A", [new Column("cola")]),
+          ]),
           new Schema("sch2", [new Table("tbl2", [new Column("colB")])]),
           new Schema("ssch1", [new Table("tbl2-b", [new Column("colB")])]),
         ]),
@@ -140,5 +143,11 @@ test("autocomplete when bigquery table completion without project and schema", (
 test("autocomplete when bigquery ignore grave note", () => {
   const sql = "SELECT count(*) FROM `my-project.";
   const bqOptions = bqAutocomplete.autocomplete(sql);
+  expect(bqOptions.filter((opt) => opt.value === "`").length).toEqual(0);
+});
+
+test("autocomplete when bigquery column", () => {
+  const sql = "SELECT colA, co FROM `my-project.sch1.tbl1` union all select col from x";
+  const bqOptions = bqAutocomplete.autocomplete(sql, 15);
   expect(bqOptions.filter((opt) => opt.value === "`").length).toEqual(0);
 });
